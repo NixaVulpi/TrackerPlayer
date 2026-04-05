@@ -1,0 +1,4 @@
+[submodule "TrackerPlayback/ThirdParty/openmpt"]
+	path = TrackerPlayback/ThirdParty/openmpt
+	url = https://github.com/OpenMPT/openmpt.git
+	branch = OpenMPT-1.32

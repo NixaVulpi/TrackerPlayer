@@ -1,0 +1,86 @@
+name: Build And Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build_and_release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v3
+        with:
+          msbuild-architecture: x64
+      
+      - name: Build libopenmpt-small x64
+        working-directory: TrackerPlayback/ThirdParty/openmpt/build/vs2022win10
+        run: msbuild libopenmpt-small.sln -m -t:Build -p:Configuration=Release -p:Platform=x64 -p:WindowsTargetPlatformVersion=10.0
+      
+      - name: Build libopenmpt-small x86
+        working-directory: TrackerPlayback/ThirdParty/openmpt/build/vs2022win10
+        run: msbuild libopenmpt-small.sln -m -t:Build -p:Configuration=Release -p:Platform=Win32 -p:WindowsTargetPlatformVersion=10.0
+      
+      - name: Build libopenmpt/portaudio x64
+        working-directory: TrackerPlayback/ThirdParty/openmpt/build/vs2022win10
+        run: msbuild libopenmpt.sln -m -t:portaudio -p:Configuration=Release -p:Platform=x64 -p:WindowsTargetPlatformVersion=10.0
+      
+      - name: Build libopenmpt/portaudio x86
+        working-directory: TrackerPlayback/ThirdParty/openmpt/build/vs2022win10
+        run: msbuild libopenmpt.sln -m -t:portaudio -p:Configuration=Release -p:Platform=Win32 -p:WindowsTargetPlatformVersion=10.0
+
+      - name: Build x64
+        run: msbuild -m -t:Restore,Build -p:Configuration=Release -p:Platform=x64
+
+      - name: Build x86
+        run: msbuild -m -t:Restore,Build -p:Configuration=Release -p:Platform=x86
+
+      - name: Package
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function New-FlatPackage {
+            param(
+              [string]$SourceDir,
+              [string]$ZipPath
+            )
+
+            $stageDir = [System.IO.Path]::GetFileNameWithoutExtension($ZipPath)
+
+            if (Test-Path $stageDir) {
+              Remove-Item -Path $stageDir -Recurse -Force
+            }
+            if (Test-Path $ZipPath) {
+              Remove-Item -Path $ZipPath -Force
+            }
+
+            New-Item -ItemType Directory -Path $stageDir | Out-Null
+
+            Get-ChildItem -Path (Join-Path $SourceDir '*') -File | Where-Object {
+              $_.Extension -in @('.exe', '.dll', '.config')
+            } | ForEach-Object {
+              Copy-Item -Path $_.FullName -Destination (Join-Path $stageDir $_.Name) -Force
+            }
+
+            Compress-Archive -Path (Join-Path $stageDir '*') -DestinationPath $ZipPath -Force
+          }
+
+          New-FlatPackage -SourceDir 'x64/Release' -ZipPath 'x64/Release/TrackerPlayer-x64.zip'
+          New-FlatPackage -SourceDir 'x86/Release' -ZipPath 'x86/Release/TrackerPlayer-x86.zip'
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: true
+          files: |
+            x64/Release/TrackerPlayer-x64.zip
+            x86/Release/TrackerPlayer-x86.zip
