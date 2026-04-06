@@ -1,48 +1,154 @@
 # Tracker Player
 
-Tracker Player is a lightweight Windows desktop tracker module player built with C, `libopenmpt`, and `PortAudio`. It plays module formats such as `.xm` from a simple executable and is configured as a Visual Studio project.
+Tracker Player is a lightweight Windows tracker-module playback solution built around a reusable native playback library. The project now consists of three layers:
 
-## Features
+- TrackerPlayback — a native DLL that exposes a small C playback API
+- TrackerPlayer — a minimal Win32 executable for command-line playback and single-instance control
+- TrackerPlaybackTest — a WPF test application for interactive validation of the DLL
 
-- Plays tracker module files through `libopenmpt`
-- Audio output powered by `PortAudio`
-- Single-instance behavior
-- Can stop an already running instance through a Windows message window
-- Supports Win32 and x64 Visual Studio builds
-- Loops playback continuously
+Audio decoding is handled by `libopenmpt`, and audio output is handled by `PortAudio`.
 
-## Project Structure
+## Architecture Overview
 
-- `Main.c` — application entry point and playback logic
-- `TrackerPlayer.vcxproj` — Visual Studio project file
-- `Manifest.xml` — Windows common controls manifest
-- `Resources.rc` — Windows resource script
-- `ThirdParty/Include/` — bundled headers for third-party libraries
-- `ThirdParty/Lib/` — bundled import/static libraries for `x86` and `x64`
-- `FunkyStars.xm` — sample tracker module file
+### 1. TrackerPlayback
+
+TrackerPlayback is the core playback engine. It is a native DLL written in C and exposes a stable procedural API through `TrackerPlayback.h`.
+
+Exported capabilities include:
+
+- setting an error callback
+- setting a playback status callback
+- querying current playback status
+- starting playback from an in-memory module buffer
+- stopping playback
+- pausing playback
+- resuming playback
+
+Playback statuses:
+
+- `TRACKER_PLAYBACK_STATUS_STOPPED`
+- `TRACKER_PLAYBACK_STATUS_PLAYING`
+- `TRACKER_PLAYBACK_STATUS_PAUSED`
+
+Implementation details:
+
+- module data is passed in as a memory buffer rather than a file path
+- decoding uses `openmpt_module_create_from_memory2`
+- playback runs on a worker thread
+- synchronization uses Win32 events and a critical section
+- audio output targets stereo `float32` samples at `48000 Hz`
+- the engine first tries non-interleaved output and falls back to interleaved output when needed
+- loop behavior is controlled by the caller
+
+### 2. TrackerPlayer
+
+TrackerPlayer is a small Win32 frontend that uses `TrackerPlayback.dll`.
+
+Responsibilities:
+
+- parses the command line
+- loads the selected module file into memory
+- passes that memory buffer to `TrackerPlayback_Play`
+- shows message boxes for startup and playback failures
+- keeps a hidden message window alive during playback
+- enforces single-instance behavior through a named mutex
+
+Single-instance behavior:
+
+- if no module path is provided, the app shows an error
+- if another instance is already running and no module path is provided, the running instance is asked to stop
+- if another instance is already running and a module path is provided, the new instance exits with an error message
+
+### 3. TrackerPlaybackTest
+
+TrackerPlaybackTest is a WPF desktop test harness for the DLL.
+
+It provides:
+
+- file browsing for tracker modules
+- play / pause / resume / stop controls
+- optional loop playback
+- current status display
+- a log view for callback and operation messages
+
+This project is useful for validating the playback API independently from the native command-line player.
+
+## Repository Structure
+
+- `TrackerPlayback/` — native playback DLL project
+	- `TrackerPlayback.h` — public C API
+	- `TrackerPlayback.c` — playback engine implementation
+	- `TrackerPlaybackInternal.h` — internal state and constants
+	- `ThirdParty/openmpt/` — bundled `libopenmpt` source tree
+- `TrackerPlayer/` — native Win32 player executable
+	- `Main.c` — application entry point and instance-control logic
+- `TrackerPlaybackTest/` — WPF validation app
+	- `TrackerPlayback.cs` — P/Invoke wrapper for the DLL API
+	- `MainWindow.xaml` / `MainWindow.xaml.cs` — UI and playback interactions
+- `FunkyStars.xm` — sample module file
+- `TrackerPlayer.slnx` — solution workspace entry
+
+## Public Playback API
+
+The DLL exposes the following functions:
+
+- `TrackerPlayback_SetErrorCallback`
+- `TrackerPlayback_SetStatusCallback`
+- `TrackerPlayback_GetStatus`
+- `TrackerPlayback_Play`
+- `TrackerPlayback_Stop`
+- `TrackerPlayback_Pause`
+- `TrackerPlayback_Resume`
+
+`TrackerPlayback_Play` accepts:
+
+- a pointer to module data in memory
+- the size of that buffer
+- a loop flag indicating whether playback should repeat forever
 
 ## Usage
 
-Run the executable with a module file path as the first command-line argument.
+### Native player
 
-Example:
+Run the executable with a module file path:
 
 `TrackerPlayer.exe FunkyStars.xm`
 
-Behavior summary:
+Typical flow:
 
-- If no file path is provided, the application shows an error message.
-- If another instance is already running and no file path is passed, the running instance is asked to stop.
-- If another instance is already running and a file path is passed, the application refuses to start a second playback instance.
-- When playback reaches the end of the module, it restarts from the beginning.
+1. the player resolves the file path
+2. the module file is loaded fully into memory
+3. the memory buffer is passed to `TrackerPlayback.dll`
+4. playback continues until stopped, the window receives a stop message, or the module ends
 
-## Implementation Notes
+### WPF test app
 
-- The application uses `wWinMain` as a Windows GUI entry point.
-- Module files are loaded entirely into memory before creating the `libopenmpt` module handle.
-- Audio playback uses a default stereo output stream at `48000 Hz`.
-- The buffer size constant in the source is `480` frames.
-- The program tries non-interleaved float output first and falls back to interleaved float output if needed.
+Use `TrackerPlaybackTest` when you want to:
+
+- verify the exported DLL API
+- test pause and resume behavior
+- inspect callback notifications
+- validate module loading without going through the native single-instance app
+
+## Supported Behavior
+
+Current implementation supports:
+
+- tracker-module playback through `libopenmpt`
+- in-memory module loading
+- playback state transitions: stopped, playing, paused
+- looped or non-looped playback
+- Win32 and x64 builds
+- native and managed test frontends
+
+## Build Notes
+
+- primary native code is written in C
+- the test frontend is written in C# / WPF
+- playback depends on `libopenmpt` and `PortAudio`
+- the repository includes Visual Studio project files for the native player, native DLL, and WPF test app
+
+When building the full solution, ensure the DLL is available beside the consuming executable or test application.
 
 ## License
 
